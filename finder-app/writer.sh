@@ -5,10 +5,6 @@ if [ $# != 2 ] ; then
     exit 1
 fi
 
-writefile="$1"
-writestr="$2"
-
-mkdir -p `dirname "$writefile"` || exit 1
-
-echo "$writestr" > "$writefile" || exit 1
-
+make clean
+make 
+./writer "$1" "$2"
