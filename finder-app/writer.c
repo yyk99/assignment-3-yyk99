@@ -39,8 +39,13 @@ int main(int argc, char **argv)
     return 1;	   
   }
 
+  syslog(LOG_DEBUG, "Writing %s to %s", argv[2], argv[1]); 
   int rc = fputs(argv[2], fo);
-  syslog(LOG_DEBUG, "fputs returns %d", rc); 
+  if (rc < 0) {
+    syslog(LOG_ERR, "write to file failed: %s(%d)", strerror(errno), errno);
+    fclose(fo);
+    return 1;
+  }
   fclose(fo);
   
   return 0;
