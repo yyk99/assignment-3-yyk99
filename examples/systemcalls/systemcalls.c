@@ -1,5 +1,12 @@
 #include "systemcalls.h"
 
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdlib.h>
+
 /**
  * @param cmd the command to execute with system()
  * @return true if the command in @param cmd was executed
@@ -11,12 +18,13 @@ bool do_system(const char *cmd)
 {
 
 /*
- * TODO  add your code here
+ * DONE:  add your code here
  *  Call the system() function with the command set in the cmd
  *   and return a boolean true if the system() call completed with success
  *   or false() if it returned a failure
 */
-
+    if (system(cmd))
+        return false;
     return true;
 }
 
@@ -44,13 +52,10 @@ bool do_exec(int count, ...)
     {
         command[i] = va_arg(args, char *);
     }
+    va_end(args);
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
-
 /*
- * TODO:
+ * DONE:
  *   Execute a system command by calling fork, execv(),
  *   and wait instead of system (see LSP page 161).
  *   Use the command[0] as the full path to the command to execute
@@ -58,10 +63,24 @@ bool do_exec(int count, ...)
  *   as second argument to the execv() command.
  *
 */
+    pid_t pid = fork();
+    if (pid < 0) {
+        /* fork failed. */
+        return false;
+    }
 
-    va_end(args);
+    if (pid == 0) {
+        execv(command[0], command);
+        exit(-1); /* execv failed */
+    }
 
-    return true;
+    int status;
+    if (waitpid (pid, &status, 0) == -1)
+        return false;
+    if (WIFEXITED (status))
+        return WEXITSTATUS (status) == 0;
+    
+    return false;
 }
 
 /**
@@ -80,10 +99,7 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
-
+    va_end(args);
 
 /*
  * TODO
@@ -92,8 +108,36 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *   The rest of the behaviour is same as do_exec()
  *
 */
+    pid_t pid = fork();
+    if (pid < 0) {
+        /* fork failed. */
+        return false;
+    }
 
-    va_end(args);
+    if (pid == 0) {
+        int file_fd = open(outputfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if(file_fd < 0)
+            exit(-1); /* open failed */
+        if (dup2(file_fd, STDOUT_FILENO) == -1)
+            exit(-1); /* dup2 failed */
+        close(file_fd);
+        /* STDOUT_FILENO is outputfile */
+        execv(command[0], command);
+        exit(-1); /* execv failed */
+    }
 
-    return true;
+    int status;
+    if (waitpid (pid, &status, 0) == -1)
+        return false;
+    if (WIFEXITED (status))
+        return WEXITSTATUS (status) == 0;
+    
+    return false;
 }
+
+/* Local Variables: */
+/* mode: c */
+/* comment-column: 40 */
+/* c-basic-offset: 4 */
+/* indent-tabs-mode: nil */
+/* End: */
