@@ -39,9 +39,9 @@ if [ ! -e ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ]; then
     # TODO: Add your kernel build steps here
     make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- mrproper
     make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- defconfig
-    make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- all -j4
+    make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- Image -j4
 #    make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- modules
-#    make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- dtbs -j4
+    make ARCH=arm64 CROSS_COMPILE=aarch64-none-linux-gnu- dtbs -j4
     
 fi
 
@@ -68,7 +68,7 @@ cp ${OUTDIR}/linux-stable/arch/arm64/boot/Image ${OUTDIR}/
 cd "$OUTDIR"
 if [ ! -d "${OUTDIR}/busybox" ]
 then
-    git clone git@github.com:mirror/busybox.git --depth 1 --branch ${BUSYBOX_VERSION}
+    git clone https://github.com/mirror/busybox.git --depth 1 --branch ${BUSYBOX_VERSION}
     cd busybox
     # git checkout ${BUSYBOX_VERSION}
     make defconfig
