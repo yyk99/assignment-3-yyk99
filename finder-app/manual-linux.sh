@@ -15,10 +15,10 @@ CROSS_COMPILE=aarch64-none-linux-gnu-
 
 if [ $# -lt 1 ]
 then
-	echo "Using default directory ${OUTDIR} for output"
+    echo "Using default directory ${OUTDIR} for output"
 else
-	OUTDIR=$1
-	echo "Using passed directory ${OUTDIR} for output"
+    OUTDIR=$1
+    echo "Using passed directory ${OUTDIR} for output"
 fi
 
 mkdir -p ${OUTDIR}
@@ -26,8 +26,8 @@ mkdir -p ${OUTDIR}
 cd "$OUTDIR"
 if [ ! -d "${OUTDIR}/linux-stable" ]; then
     #Clone only if the repository does not exist.
-	echo "CLONING GIT LINUX STABLE VERSION ${KERNEL_VERSION} IN ${OUTDIR}"
-	git clone ${KERNEL_REPO} --depth 1 --single-branch --branch ${KERNEL_VERSION}
+    echo "CLONING GIT LINUX STABLE VERSION ${KERNEL_VERSION} IN ${OUTDIR}"
+    git clone ${KERNEL_REPO} --depth 1 --single-branch --branch ${KERNEL_VERSION}
 fi
 if [ ! -e ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ]; then
     cd linux-stable
@@ -43,8 +43,8 @@ echo "Creating the staging directory for the root filesystem"
 cd "$OUTDIR"
 if [ -d "${OUTDIR}/rootfs" ]
 then
-	echo "Deleting rootfs directory at ${OUTDIR}/rootfs and starting over"
-    sudo rm  -rf ${OUTDIR}/rootfs
+    echo "Deleting rootfs directory at ${OUTDIR}/rootfs and starting over"
+    rm -rf ${OUTDIR}/rootfs
 fi
 
 # TODO: Create necessary base directories
@@ -52,19 +52,34 @@ fi
 cd "$OUTDIR"
 if [ ! -d "${OUTDIR}/busybox" ]
 then
-git clone git://busybox.net/busybox.git
+    git clone git@github.com:mirror/busybox.git --depth 1 --branch ${BUSYBOX_VERSION}
     cd busybox
-    git checkout ${BUSYBOX_VERSION}
-    # TODO:  Configure busybox
+    # git checkout ${BUSYBOX_VERSION}
+    make defconfig
 else
     cd busybox
 fi
 
-# TODO: Make and install busybox
+# Make and install busybox
+
+make CROSS_COMPILE=${CROSS_COMPILE}
+make CROSS_COMPILE=${CROSS_COMPILE} CONFIG_PREFIX=${OUTDIR}/rootfs install
 
 echo "Library dependencies"
-${CROSS_COMPILE}readelf -a bin/busybox | grep "program interpreter"
-${CROSS_COMPILE}readelf -a bin/busybox | grep "Shared library"
+${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "program interpreter"
+${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "Shared library"
+
+# + echo 'Library dependencies'
+# Library dependencies
+# + aarch64-none-linux-gnu-readelf -a /tmp/aeld/rootfs/bin/busybox
+# + grep 'program interpreter'
+#       [Requesting program interpreter: /lib/ld-linux-aarch64.so.1]
+# + aarch64-none-linux-gnu-readelf -a /tmp/aeld/rootfs/bin/busybox
+# + grep 'Shared library'
+#  0x0000000000000001 (NEEDED)             Shared library: [libm.so.6]
+#  0x0000000000000001 (NEEDED)             Shared library: [libresolv.so.2]
+#  0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
+
 
 # TODO: Add library dependencies to rootfs
 
