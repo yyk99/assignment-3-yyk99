@@ -56,6 +56,7 @@ bool start_thread_obtaining_mutex(pthread_t *thread, pthread_mutex_t *mutex, int
     int rc;
     if ((rc = pthread_create(thread, NULL, threadfunc, thread_func_args))){
         ERROR_LOG("Cannot create thread (%d)", rc);
+        free(thread_func_args);
         return false;
     }
 
