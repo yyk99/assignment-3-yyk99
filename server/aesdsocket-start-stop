@@ -5,11 +5,11 @@ DAEMON=aesdsocket
 case "$1" in
     start)
         echo "Starting $DAEMON"
-        echo start-stop-server -S -n $DAEMON -a /usr/bin/$DAEMON
+        start-stop-daemon -S -n $DAEMON -a /usr/bin/$DAEMON -- -d
 	;;
     stop)
         echo "Stopping $DAEMON"
-        start-stop-server -K -n $DAEMON
+        start-stop-daemon server -K -n $DAEMON
         ;;
     *)
 	echo "Usage: $0 {start|stop}"
