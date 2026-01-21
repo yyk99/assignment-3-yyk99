@@ -1,9 +1,3 @@
-/*
-
-
-
- */
-
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
@@ -14,6 +8,8 @@
 #include <errno.h>
 #include <string.h>
 #include <signal.h>
+
+#include <assert.h>
 
 #define OUTPUT_FILE "/var/tmp/aesdsocketdata"
 #define SERVICE "9000"
@@ -50,9 +46,46 @@ void on_signal(int)
     exit(0);
 }
 
+void return_dump(int client)
+{
+    /* fprintf(stderr, "send it back\n"); */
+
+    fflush(dump);
+    FILE *f = fopen(OUTPUT_FILE, "r");
+    if (f) {
+        char buf[512];
+        int s;
+
+        while ((s = fread(buf, 1, sizeof(buf), f)) > 0) {
+            /* fprintf(stderr, "fread(...) == %d\n", (int)s); */
+            send(client, buf, s, 0);
+        }
+        fclose(f);
+    }
+}
+
 int main(int argc, char **argv)
 {
     int listen_sock;
+    int daemon_flag = 0;
+    char *me = argv[0];
+    int opt;
+
+    while ((opt = getopt(argc, argv, "dvh")) != -1) {
+        switch (opt) {
+        case 'd':
+            daemon_flag = 1;
+            break;
+        case 'v':
+            /* TODO: verbose */
+            break;
+        case 'h':
+        default:
+            /* usage */
+            fprintf(stderr, "Usage: %s [-d]\n", me);
+            return -1;
+        }
+    }
 
     (void)openlog("aesdsocket", LOG_PID|LOG_PERROR, LOG_USER);
 
@@ -84,11 +117,26 @@ int main(int argc, char **argv)
     }
     freeaddrinfo(info);
 
-    do {
-        if (listen(listen_sock, BACK_LOG)) {
-            syslog(LOG_ERR, "listen(...) failed: %d", errno);
-            return -1;
+    dump = fopen(OUTPUT_FILE, "w");
+    if (!dump) {
+        syslog(LOG_ERR, "Cannot create dump file: %s", strerror(errno));
+        return -1;
+    }
+    if (listen(listen_sock, BACK_LOG)) {
+        syslog(LOG_ERR, "listen(...) failed: %d", errno);
+        return -1;
+    }
+
+    if (daemon_flag) {
+        int rc = fork();
+        if (rc) {
+            return 0;
         }
+        setsid();
+        syslog(LOG_INFO, "Daemon started");
+    }
+
+    do {
         struct sockaddr addr;
         socklen_t addrlen = sizeof(addr);
         char buf[80];
@@ -102,24 +150,22 @@ int main(int argc, char **argv)
         syslog(LOG_INFO, "Accepted connection from %s",
                ip2str(&addr, buf, sizeof(buf)));
 
-        dump = fopen(OUTPUT_FILE, "w");
-        if (!dump) {
-            syslog(LOG_ERR, "Cannot create dump file: %s", strerror(errno));
-            return -1;
-        }
         do {
             ssize_t s = recv(cli_sock, buf, sizeof(buf), 0);
             if (s <= 0) {
                 syslog(LOG_INFO, "Close connection from %s",
                        ip2str(&addr, buf, sizeof(buf)));
-                fclose(dump);
-                dump = 0;
+                fflush(dump);
                 break;
             }
-            fprintf (stderr, "s=%d\n", (int)s);
-            fwrite(buf, s, 1, dump);
+            /* fprintf(stderr, "buf[s-1] == %d\n", buf[s-1] & 255); */
+            fwrite(buf, 1, s, dump);
+            if (buf[s-1] == '\n'){
+                return_dump(cli_sock);
+            }
          }while(1);
     } while(1);
-
+    /* Hmm, how can we get here? */
+    fclose(dump);
     return 0;
 }
