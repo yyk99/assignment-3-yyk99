@@ -1,0 +1,24 @@
+#!/bin/sh
+
+DAEMON=aesdsocket
+
+case "$1" in
+    start)
+        echo "Starting $DAEMON"
+        echo start-stop-server -S -n $DAEMON -a /usr/bin/$DAEMON
+	;;
+    stop)
+        echo "Stopping $DAEMON"
+        start-stop-server -K -n $DAEMON
+        ;;
+    *)
+	echo "Usage: $0 {start|stop}"
+	exit 1
+esac
+
+# Local Variables:
+# mode: shell-script
+# sh-basic-offset: 4
+# indent-tabs-mode: nil
+# sh-shell: sh
+# End:
