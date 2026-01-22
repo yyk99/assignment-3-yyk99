@@ -5,9 +5,11 @@
 #include <unistd.h> // close(), etc.
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <errno.h>
 #include <string.h>
 #include <signal.h>
+#include <poll.h>
 
 #include <assert.h>
 
@@ -22,11 +24,44 @@
 
 #include "queue.h"
 
+static void verbose(const char *format, ...);
 
+
+/* */
 struct param_t {
     int cli_sock;
-    char buf[80];
+    int done;          /* non-zero if thread is ready to join */
+    char *cli_addr;    /* ip address as text "X.X.X.X" */
+    char *record;       /* current record */
+    size_t record_len;
+    char buf[512];      /* socket I/O buffer */
 };
+
+static void release_param(void *thread_return)
+{
+    /* TODO: check for THREAD_CANCEL */
+    struct param_t *p = (struct param_t *)thread_return;
+    if (p) {
+        if (p->cli_addr)
+            free(p->cli_addr);
+        free(p);
+    }
+}
+
+/* a "simple" implementation. Just realloc() the record */
+static void append_record(struct param_t *ctx, char *data, size_t data_len)
+{
+    assert(data_len != 0); // DEBUG
+    ctx->record = realloc(ctx->record, ctx->record_len + data_len);
+    if(!ctx->record) {
+        syslog(LOG_ERR, "Cannot allocate memory for a record");
+        exit (-1);
+    }
+    memcpy(ctx->record+ctx->record_len, data, data_len);
+    ctx->record_len += data_len;
+
+    verbose("append_record: ctx->record_len = %lu, data_len = %lu", ctx->record_len, data_len);
+}
 
 static char* ip2str(struct sockaddr *sa, char *s, size_t maxlen)
 {
@@ -45,33 +80,47 @@ static char* ip2str(struct sockaddr *sa, char *s, size_t maxlen)
     return s;
 }
 
+// LIST.
+typedef struct list_data_s list_data_t;
+struct list_data_s {
+    pthread_t tid;
+    struct param_t *ctx;
+    LIST_ENTRY(list_data_s) entries;
+};
+
+volatile sig_atomic_t done = 0;
+static pthread_mutex_t dump_mutex = PTHREAD_MUTEX_INITIALIZER;
 static FILE *dump;
+
+int daemon_flag = 0;
+int verbose_flag = 0;
 
 static void on_signal(int)
 {
     syslog(LOG_INFO, "Caught signal, exiting");
-    if (dump) {
-        fclose(dump);
-    }
-    exit(0);
+    done = 1;
 }
 
-static void return_dump(int client)
+static void return_dump(struct param_t *ctx)
 {
-    /* fprintf(stderr, "send it back\n"); */
-
+    assert(ctx->record);
+    pthread_mutex_lock(&dump_mutex);
+    fwrite(ctx->record, 1, ctx->record_len, dump);
     fflush(dump);
+
     FILE *f = fopen(OUTPUT_FILE, "r");
     if (f) {
-        char buf[512];
         int s;
 
-        while ((s = fread(buf, 1, sizeof(buf), f)) > 0) {
-            /* fprintf(stderr, "fread(...) == %d\n", (int)s); */
-            send(client, buf, s, 0);
+        while ((s = fread(ctx->buf, 1, sizeof(ctx->buf), f)) > 0) {
+            send(ctx->cli_sock, ctx->buf, s, 0);
         }
         fclose(f);
     }
+    free(ctx->record);
+    ctx->record_len = 0;
+    ctx->record = NULL;
+    pthread_mutex_unlock(&dump_mutex);
 }
 
 static void *server_function(void *p)
@@ -79,28 +128,76 @@ static void *server_function(void *p)
     struct param_t *ctx = (struct param_t *)p;
     if(!p)
         return p;
-    char buf[80];
-    do {
-        ssize_t s = recv(ctx->cli_sock, buf, sizeof(buf), 0);
+    struct pollfd conn_request = { ctx->cli_sock, POLLIN, 0 };
+    int tmo = 1 * 1000; /* in msec */
+    while(!done) {
+        int err = poll(&conn_request, 1, tmo);
+        if (err < 0)
+            break;
+        if (err == 0)
+            continue;
+        ssize_t s = recv(ctx->cli_sock, ctx->buf, sizeof(ctx->buf), 0);
         if (s <= 0) {
-            syslog(LOG_INFO, "Close connection from %s", ctx->buf);
+            syslog(LOG_INFO, "Close connection from %s", ctx->cli_addr);
             fflush(dump);
             break;
         }
-        /* fprintf(stderr, "buf[s-1] == %d\n", buf[s-1] & 255); */
-        fwrite(buf, 1, s, dump);
-        if (buf[s-1] == '\n'){
-            return_dump(ctx->cli_sock);
-        }
-    }while(1);
 
+        append_record(ctx, ctx->buf, s);
+        if (ctx->buf[s-1] == '\n') {
+            return_dump(ctx);
+        }
+    }
+
+    close(ctx->cli_sock);
+
+    if (ctx->record) {
+        free(ctx->record);
+        ctx->record = NULL;
+    }
+    ctx->done = 1;
     return p;
+}
+
+/*
+  man strftime(3), RFC 2822-compliant date format:
+  "%a, %d %b %Y %T %z"
+*/
+static void *timestamp_function(void *p)
+{
+    char outstr[200];
+    time_t t;
+    struct tm *tmp;
+    size_t cnt = 0;
+    while(!done) {
+        usleep(1 * 1000 * 1000);
+        ++cnt;
+        if(cnt % 10)
+            continue;
+        t = time(NULL);
+        tmp = localtime(&t);
+        strftime(outstr, sizeof(outstr), "%a, %d %b %Y %T %z", tmp);
+
+        pthread_mutex_lock(&dump_mutex);
+        fprintf(dump, "timestamp:%s\n", outstr);
+        pthread_mutex_unlock(&dump_mutex);
+    }
+    return p;
+}
+
+static void verbose(const char *format, ...)
+{
+    va_list ap;
+    if(verbose_flag) {
+        va_start(ap, format);
+        vsyslog(LOG_DEBUG, format, ap);
+        va_end(ap);
+    }
 }
 
 int main(int argc, char **argv)
 {
     int listen_sock;
-    int daemon_flag = 0;
     char *me = argv[0];
     int opt;
 
@@ -110,7 +207,7 @@ int main(int argc, char **argv)
             daemon_flag = 1;
             break;
         case 'v':
-            /* TODO: verbose */
+            verbose_flag = 1;
             break;
         case 'h':
         default:
@@ -143,8 +240,11 @@ int main(int argc, char **argv)
         return -1;
     }
 
+    int optval = 1;
+    setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)); // ignore err
+
     if (bind(listen_sock, info->ai_addr, info->ai_addrlen)) {
-        syslog(LOG_ERR, "bind(...) failed: %d", errno);
+        syslog(LOG_ERR, "bind(...) failed: %s (%d)", strerror(errno), errno);
         freeaddrinfo(info);
         return -1;
     }
@@ -169,38 +269,94 @@ int main(int argc, char **argv)
         syslog(LOG_INFO, "Daemon started");
     }
 
-    do {
-        struct sockaddr addr;
-        socklen_t addrlen = sizeof(addr);
-        memset(&addr, 0, sizeof(addr));
-        int cli_sock = accept(listen_sock, &addr, &addrlen);
-        if (cli_sock == -1){
-            syslog(LOG_ERR, "accept(...) failed: %d", errno);
-            return -1;
-        }
+    pthread_t timestamp_tid;
 
-        struct param_t *p = calloc(sizeof(struct param_t), 1);
-        if (!p) {
-            syslog(LOG_ERR, "Cannot allocate memory for thread param_t");
-            return -1;
+    if (pthread_create(&timestamp_tid, NULL, timestamp_function, NULL)){
+        syslog(LOG_ERR, "Cannot create timestamp thread");
+        return -1;
+    }
+
+    LIST_HEAD(listhead, list_data_s) head;
+    LIST_INIT(&head);
+
+    while(!done) {
+        /* implement polling for two event types:
+           - connection request
+           - working thread complete
+        */
+
+        struct pollfd conn_request = { listen_sock, POLLIN, 0 };
+        int tmo = 1 * 1000; /* in msec */
+        int err = poll(&conn_request, 1, tmo);
+        if (err == 0) {
+            /* timeout - scan the LIST for complete threads */
+            list_data_t *datap = NULL;
+            LIST_FOREACH(datap, &head, entries) {
+                if (datap->ctx && datap->ctx->done) {
+                    verbose("joining %lx", datap->tid);
+                    void *thread_return = NULL;
+                    err = pthread_join(datap->tid, &thread_return);
+                    if(err) {
+                        syslog(LOG_ERR, "pthread_join failed (%d)", err);
+                        return -1;
+                    }
+                    release_param(thread_return);
+                    datap->ctx = NULL;
+                    /* TODO: remove */
+                    /* LIST_REMOVE(datap, entries); */
+                    /* free(datap); */
+                }
+            }
+        } else if (err > 0) {
+            /* a connection request. accept */
+            struct sockaddr addr;
+            socklen_t addrlen = sizeof(addr);
+            memset(&addr, 0, sizeof(addr));
+
+            int cli_sock = accept(listen_sock, &addr, &addrlen);
+            if (cli_sock == -1){
+                syslog(LOG_ERR, "accept(...) failed: %d", errno);
+                return -1;
+            }
+
+            struct param_t *p = calloc(sizeof(struct param_t), 1);
+            if (!p) {
+                syslog(LOG_ERR, "Cannot allocate memory for thread param_t");
+                return -1;
+            }
+            syslog(LOG_INFO, "Accepted connection from %s",
+                   ip2str(&addr, p->buf, sizeof(p->buf)));
+            p->cli_sock = cli_sock;
+            p->cli_addr = strdup(p->buf); /* Can be NULL */
+            pthread_t t;
+            if (pthread_create(&t, NULL, server_function, p)){
+                syslog(LOG_ERR, "Cannot create thread");
+                return -1;
+            }
+            /* append to the SLIST */
+
+            list_data_t *datap = calloc(sizeof(list_data_t), 1);
+            datap->tid = t;
+            datap->ctx = p;
+            verbose("Insert TID: %lx", datap->tid);
+            LIST_INSERT_HEAD(&head, datap, entries);
         }
-        syslog(LOG_INFO, "Accepted connection from %s",
-               ip2str(&addr, p->buf, sizeof(p->buf)));
-        p->cli_sock = cli_sock;
-        pthread_t t;
-        if (pthread_create(&t, NULL, server_function, p)){
-            syslog(LOG_ERR, "Cannot create thread");
-            return -1;
+    }
+
+    verbose("joining the list...");
+    list_data_t *datap = NULL;
+    while (!LIST_EMPTY(&head)) {
+        datap = LIST_FIRST(&head);
+        LIST_REMOVE(datap, entries);
+        if (datap->ctx) {
+            pthread_join(datap->tid, NULL);
+            release_param(datap->ctx);
         }
-        void *thread_return = NULL;
-        int err = pthread_join(t, &thread_return);
-        if(err) {
-            syslog(LOG_ERR, "pthread_join failed (%d)", err);
-            return -1;
-        }
-        free(thread_return);
-    } while(1);
-    /* Hmm, how can we get here? */
+        free(datap);
+    }
+
+    pthread_join(timestamp_tid, NULL);
+
     fclose(dump);
     return 0;
 }

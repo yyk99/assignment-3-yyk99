@@ -10,3 +10,4 @@ test.sh.log
 testfile.txt
 server/aesdsocket
 server/valgrind-out.txt
+server/sample
