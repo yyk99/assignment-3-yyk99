@@ -3,7 +3,7 @@
 #
 
 CC = $(CROSS_COMPILE)gcc
-CFLAGS = -g
+CFLAGS += -g -Wall -Werror
 ALL = aesdsocket
 
 all: $(ALL)

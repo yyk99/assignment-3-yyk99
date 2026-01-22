@@ -18,6 +18,16 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
+#include <pthread.h>
+
+#include "queue.h"
+
+
+struct param_t {
+    int cli_sock;
+    char buf[80];
+};
+
 static char* ip2str(struct sockaddr *sa, char *s, size_t maxlen)
 {
     switch(sa->sa_family) {
@@ -37,7 +47,7 @@ static char* ip2str(struct sockaddr *sa, char *s, size_t maxlen)
 
 static FILE *dump;
 
-void on_signal(int)
+static void on_signal(int)
 {
     syslog(LOG_INFO, "Caught signal, exiting");
     if (dump) {
@@ -46,7 +56,7 @@ void on_signal(int)
     exit(0);
 }
 
-void return_dump(int client)
+static void return_dump(int client)
 {
     /* fprintf(stderr, "send it back\n"); */
 
@@ -62,6 +72,29 @@ void return_dump(int client)
         }
         fclose(f);
     }
+}
+
+static void *server_function(void *p)
+{
+    struct param_t *ctx = (struct param_t *)p;
+    if(!p)
+        return p;
+    char buf[80];
+    do {
+        ssize_t s = recv(ctx->cli_sock, buf, sizeof(buf), 0);
+        if (s <= 0) {
+            syslog(LOG_INFO, "Close connection from %s", ctx->buf);
+            fflush(dump);
+            break;
+        }
+        /* fprintf(stderr, "buf[s-1] == %d\n", buf[s-1] & 255); */
+        fwrite(buf, 1, s, dump);
+        if (buf[s-1] == '\n'){
+            return_dump(ctx->cli_sock);
+        }
+    }while(1);
+
+    return p;
 }
 
 int main(int argc, char **argv)
@@ -82,7 +115,7 @@ int main(int argc, char **argv)
         case 'h':
         default:
             /* usage */
-            fprintf(stderr, "Usage: %s [-d]\n", me);
+            fprintf(stderr, "Usage: %s [-d][-h]\n", me);
             return -1;
         }
     }
@@ -139,7 +172,6 @@ int main(int argc, char **argv)
     do {
         struct sockaddr addr;
         socklen_t addrlen = sizeof(addr);
-        char buf[80];
         memset(&addr, 0, sizeof(addr));
         int cli_sock = accept(listen_sock, &addr, &addrlen);
         if (cli_sock == -1){
@@ -147,23 +179,26 @@ int main(int argc, char **argv)
             return -1;
         }
 
+        struct param_t *p = calloc(sizeof(struct param_t), 1);
+        if (!p) {
+            syslog(LOG_ERR, "Cannot allocate memory for thread param_t");
+            return -1;
+        }
         syslog(LOG_INFO, "Accepted connection from %s",
-               ip2str(&addr, buf, sizeof(buf)));
-
-        do {
-            ssize_t s = recv(cli_sock, buf, sizeof(buf), 0);
-            if (s <= 0) {
-                syslog(LOG_INFO, "Close connection from %s",
-                       ip2str(&addr, buf, sizeof(buf)));
-                fflush(dump);
-                break;
-            }
-            /* fprintf(stderr, "buf[s-1] == %d\n", buf[s-1] & 255); */
-            fwrite(buf, 1, s, dump);
-            if (buf[s-1] == '\n'){
-                return_dump(cli_sock);
-            }
-         }while(1);
+               ip2str(&addr, p->buf, sizeof(p->buf)));
+        p->cli_sock = cli_sock;
+        pthread_t t;
+        if (pthread_create(&t, NULL, server_function, p)){
+            syslog(LOG_ERR, "Cannot create thread");
+            return -1;
+        }
+        void *thread_return = NULL;
+        int err = pthread_join(t, &thread_return);
+        if(err) {
+            syslog(LOG_ERR, "pthread_join failed (%d)", err);
+            return -1;
+        }
+        free(thread_return);
     } while(1);
     /* Hmm, how can we get here? */
     fclose(dump);
