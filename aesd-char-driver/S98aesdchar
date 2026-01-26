@@ -1,0 +1,39 @@
+#!/bin/sh
+
+set -e # exit on failure
+
+module=aesdchar
+device=aesdchar
+mode=664
+
+# Group: since distributions do it differently, look for wheel or use staff
+# These are groups which correspond to system administrator accounts
+if grep -q '^staff:' /etc/group; then
+    group="staff"
+else
+    group="wheel"
+fi
+
+case "$1" in
+    start)
+	modprobe ${module}
+	major=$(awk "\$2==\"$module\" {print \$1}" /proc/devices)
+	if [ ! -z ${major} ]; then
+	    rm -f /dev/${device}
+	    mknod /dev/${device} c $major 0
+	    chgrp $group /dev/${device}
+	    chmod $mode  /dev/${device}
+	else
+	    echo "No device found in /proc/devices for driver ${module}"
+	fi
+	;;
+
+    stop)
+	# Unload in reverse order
+	rmmod ${module}
+	;;
+
+    *)
+	echo "Usage: $0 {start|stop}"
+	exit 1
+esac

@@ -29,14 +29,14 @@
 struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct aesd_circular_buffer *buffer,
             size_t char_offset, size_t *entry_offset_byte_rtn )
 {
+    int begin, end, i;
     if (buffer->in_offs == buffer->out_offs && !buffer->full)
         return NULL; /* empty. nothing is here */
 
-    int begin = buffer->out_offs;
-    int end = buffer->in_offs;
+    begin = buffer->out_offs;
+    end = buffer->in_offs;
     if (end <= begin)
         end += AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
-    int i;
     for (i = begin ; i < end ; ++i) {
         struct aesd_buffer_entry *p = &buffer->entry[ i % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED ];
         if (p->size > char_offset) {
