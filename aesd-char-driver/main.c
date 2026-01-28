@@ -51,10 +51,32 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
                 loff_t *f_pos)
 {
     ssize_t retval = 0;
-    PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
-    /**
-     * TODO: handle read
-     */
+    struct aesd_dev *dev = filp->private_data;
+
+    PDEBUG("read %zu bytes with offset %lld", count, *f_pos);
+
+	if (mutex_lock_interruptible(&dev->lock))
+		return -ERESTARTSYS;
+
+	/* read only up to the end of this quantum */
+	if (count > dev->line_buffer_size)
+		count = dev->line_buffer_size;
+
+	if (copy_to_user(buf, dev->line_buffer, count)) {
+		retval = -EFAULT;
+		goto out;
+	}
+
+	*f_pos += count;
+	retval = count;
+
+    /* TODO: implement properly */
+    kfree(dev->line_buffer);
+    dev->line_buffer = NULL;
+    dev->line_buffer_size = 0;
+
+ out:
+    mutex_unlock(&dev->lock);
     return retval;
 }
 
@@ -90,7 +112,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     }
     retval = -ENOMEM;
     if(!(dev->line_buffer = kmalloc(count, GFP_KERNEL)))
-        goto err;
+        goto out;
     dev->line_buffer_size = count;
 
     if (copy_from_user(dev->line_buffer, buf, count)) {
@@ -98,9 +120,9 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         kfree(dev->line_buffer);
         dev->line_buffer_size = 0;
         dev->line_buffer = NULL;
-        goto err;
+        goto out;
     }
-
+#if 0
     if (dev->line_buffer[count - 1] == '\n') {
         lines_insert(dev->lines, dev->line_buffer, dev->line_buffer_size);
         dev->line_buffer = NULL;
@@ -108,8 +130,11 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 
         retval = dev->line_buffer_size;
     }
+#else
+    retval = count;
+#endif
 
- err:
+ out:
     mutex_unlock(&dev->lock);
     return retval;
 }
@@ -176,6 +201,7 @@ void aesd_cleanup_module(void)
 
     cdev_del(&aesd_device.cdev);
 
+    kfree(aesd_device.line_buffer);
     kfree(aesd_device.lines);
     aesd_device.lines = NULL;
 

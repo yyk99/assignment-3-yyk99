@@ -28,6 +28,9 @@ endif
 clean:
 	rm -rf *.o *~ core .depend .*.cmd *.ko *.mod.c .tmp_versions
 
+aesd_test: aesd_test.c
+	$(CC) -o aesd_test aesd_test.c
+
 # Local Variables:
 # compile-command: "make clean && make -C /usr/src/linux-headers-$(uname -r) M=`pwd` modules CC=x86_64-linux-gnu-gcc-12"
 # End:
