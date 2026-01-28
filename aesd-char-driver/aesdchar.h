@@ -23,13 +23,22 @@
 #  define PDEBUG(fmt, args...) /* not debugging: nothing */
 #endif
 
+/* static memory allocation for the only one "device" */
 struct aesd_dev
 {
-    /**
-     * TODO: Add structure(s) and locks needed to complete assignment requirements
-     */
+    char *line_buffer;
+    size_t line_buffer_size;
+    struct aesd_circular_buffer *lines;
+	struct mutex lock;     /* mutual exclusion semaphore     */
     struct cdev cdev;     /* Char device structure      */
 };
 
+/* fix [-Wmissing-prototypes] */
+int aesd_open(struct inode *inode, struct file *filp);
+int aesd_release(struct inode *inode, struct file *filp);
+ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos);
+ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos);
+int aesd_init_module(void);
+void aesd_cleanup_module(void);
 
 #endif /* AESD_CHAR_DRIVER_AESDCHAR_H_ */

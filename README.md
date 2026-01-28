@@ -25,4 +25,21 @@ to synchronize after cloning and before starting each assignment, as discussed i
 
 As a part of the assignment instructions, you will setup your assignment repo to perform automated testing using github actions.  See [this page](https://github.com/cu-ecen-aeld/aesd-assignments/wiki/Setting-up-Github-Actions) for details.
 
-Note that the unit tests will fail on this repository, since assignments are not yet implemented.  That's your job :) 
+Note that the unit tests will fail on this repository, since assignments are not yet implemented.  That's your job :)
+
+
+## STEPS TO MANUALLY TEST ASSIGNMENT 8 on your native machine
+
+These steps are useful for debugging your application before attempting to run on
+an embedded target
+After following assignment implementation steps
+
+- cd into your aesd-char-driver DIRECTORY and do a make to build for your development machine.
+- RUN ./aesdchar_unload, followed by ./aesdchar_load to load your module on your development machine
+
+From your main root assignment directory,
+
+- RUN ./assignment-autotest/test/assignment8/drivertest.sh to verify you implementation
+
+When drivertest succeeds, start your modified aesdsocket application from the server subdirectory
+Verify it passes sockettest.sh by running ./assignment-autotest/test/assignment8/sockettest.sh

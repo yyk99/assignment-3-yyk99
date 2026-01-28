@@ -18,6 +18,9 @@
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
 #include "aesdchar.h"
+
+#include "aesd-circular-buffer.h"
+
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
@@ -28,19 +31,19 @@ struct aesd_dev aesd_device;
 
 int aesd_open(struct inode *inode, struct file *filp)
 {
+	struct aesd_dev *dev; /* device information */
+
     PDEBUG("open");
-    /**
-     * TODO: handle open
-     */
+
+	dev = container_of(inode->i_cdev, struct aesd_dev, cdev);
+	filp->private_data = dev; /* for other methods */
+
     return 0;
 }
 
 int aesd_release(struct inode *inode, struct file *filp)
 {
     PDEBUG("release");
-    /**
-     * TODO: handle release
-     */
     return 0;
 }
 
@@ -48,23 +51,129 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
                 loff_t *f_pos)
 {
     ssize_t retval = 0;
-    PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
-    /**
-     * TODO: handle read
-     */
+    struct aesd_dev *dev = filp->private_data;
+    struct aesd_buffer_entry *ep;
+    size_t offset;
+
+    PDEBUG("read %zu bytes with offset %lld", count, *f_pos);
+
+	if (mutex_lock_interruptible(&dev->lock))
+		return -ERESTARTSYS;
+
+    ep = aesd_circular_buffer_find_entry_offset_for_fpos(dev->lines, *f_pos, &offset);
+    if (!ep) {
+        retval = 0;
+        goto out;
+    }
+    if (offset > ep->size) { /* ASSERT */
+        printk(KERN_ERR "%s: offset = %zu is > size = %zu\n", __func__, offset, ep->size);
+        retval = -EFAULT;
+        goto out;
+    }
+	if (count > ep->size - offset)
+		count = ep->size - offset;
+
+	if (copy_to_user(buf, ep->buffptr + offset, count)) {
+		retval = -EFAULT;
+		goto out;
+	}
+
+	*f_pos += count;
+	retval = count;
+
+ out:
+    mutex_unlock(&dev->lock);
     return retval;
+}
+
+static void lines_delete(struct aesd_circular_buffer *self)
+{
+    int i;
+    for (i = 0 ; i != AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED ; ++i) {
+        kfree(self->entry[i].buffptr);
+        self->entry[i].buffptr = NULL;
+        self->entry[i].size = 0;
+    }
+}
+
+/*
+   allocate memory and insert next entry to the circular buffer `lines`
+ */
+static void lines_insert(struct aesd_circular_buffer *lines, char *buf, size_t count)
+{
+    struct aesd_buffer_entry cc = { .buffptr = kmalloc(count, GFP_KERNEL), .size = count };
+    if (!cc.buffptr) {
+        printk(KERN_ERR "lines_insert: Error allocating memory");
+        return;
+    }
+
+    memcpy((char *)cc.buffptr, buf, count);
+    PDEBUG("lines_insert: in: %d out: %d", lines->in_offs, lines->out_offs);
+
+    aesd_circular_buffer_add_entry(lines, &cc);
 }
 
 ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
                 loff_t *f_pos)
 {
-    ssize_t retval = -ENOMEM;
-    PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
-    /**
-     * TODO: handle write
-     */
+    struct aesd_dev *dev = filp->private_data;
+	ssize_t retval = -ENOMEM;
+    char *tmp_buf;
+    size_t tmp_size;
+
+    PDEBUG("write %zu bytes with offset %lld", count, *f_pos);
+
+	if (mutex_lock_interruptible(&dev->lock))
+		return -ERESTARTSYS;
+
+    /*
+      TODO: do not re-allocate line_buf if it is alredy large enought.
+            Use ksize(...)
+    */
+
+    tmp_size = dev->line_buffer_size + count;
+    tmp_buf = krealloc(dev->line_buffer, tmp_size, GFP_KERNEL);
+    if(!tmp_buf) {
+        retval = -ENOMEM;
+        goto out;
+    }
+
+    dev->line_buffer = tmp_buf;
+
+    if (copy_from_user(dev->line_buffer + dev->line_buffer_size, buf, count)) {
+        retval = -EFAULT;
+        goto out;
+    }
+
+    dev->line_buffer_size = tmp_size;
+
+    retval = count;
+    *f_pos += count;
+
+    char *pos = memchr(tmp_buf, '\n', tmp_size);
+    while(pos) {
+        lines_insert(dev->lines, tmp_buf, pos - tmp_buf + 1);
+        tmp_size -= pos - tmp_buf + 1;
+        tmp_buf = pos + 1;
+        pos = memchr(tmp_buf, '\n', tmp_size);
+    }
+    PDEBUG("after while(pos) tmp_size = %zu", tmp_size);
+    if (tmp_size) {
+        memmove(dev->line_buffer, tmp_buf, tmp_size);
+        dev->line_buffer_size = tmp_size;
+    } else {
+        /* TODO: use ksize() */
+        kfree(dev->line_buffer);
+        dev->line_buffer = NULL;
+        dev->line_buffer_size = 0;
+    }
+
+ out:
+    PDEBUG("retval = %d", (int)retval);
+    mutex_unlock(&dev->lock);
     return retval;
 }
+
 struct file_operations aesd_fops = {
     .owner =    THIS_MODULE,
     .read =     aesd_read,
@@ -98,19 +207,27 @@ int aesd_init_module(void)
         printk(KERN_WARNING "Can't get major %d\n", aesd_major);
         return result;
     }
-    memset(&aesd_device,0,sizeof(struct aesd_dev));
 
-    /**
-     * TODO: initialize the AESD specific portion of the device
-     */
+    memset(&aesd_device, 0, sizeof(struct aesd_dev));
+    aesd_device.lines = kmalloc(sizeof(struct aesd_circular_buffer), GFP_KERNEL);
+	if (!aesd_device.lines) {
+		result = -ENOMEM;
+		goto fail;
+	}
+
+    aesd_circular_buffer_init(aesd_device.lines);
 
     result = aesd_setup_cdev(&aesd_device);
-
     if( result ) {
-        unregister_chrdev_region(dev, 1);
+        goto fail;
     }
     return result;
 
+ fail:
+    kfree(aesd_device.lines);
+    aesd_device.lines = NULL;
+    unregister_chrdev_region(dev, 1);
+    return result;
 }
 
 void aesd_cleanup_module(void)
@@ -119,9 +236,11 @@ void aesd_cleanup_module(void)
 
     cdev_del(&aesd_device.cdev);
 
-    /**
-     * TODO: cleanup AESD specific poritions here as necessary
-     */
+    kfree(aesd_device.line_buffer);
+    aesd_device.line_buffer = NULL;
+
+    lines_delete(aesd_device.lines);
+    aesd_device.lines = NULL;
 
     unregister_chrdev_region(devno, 1);
 }
