@@ -87,14 +87,18 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
 }
 
 /*
-   Insert next entry to the circular buffer `lines`
-   Release the content of the current cell in the circular buffer
+   allocate memory and insert next entry to the circular buffer `lines`
  */
 static void lines_insert(struct aesd_circular_buffer *lines, char *buf, size_t count)
 {
-    struct aesd_buffer_entry cc = { .buffptr = buf, .size = count };
+    struct aesd_buffer_entry cc = { .buffptr = kmalloc(count, GFP_KERNEL), .size = count };
+    if (!cc.buffptr) {
+        printk(KERN_ERR "lines_insert: Error allocating memory");
+        return;
+    }
 
-    PDEBUG( "lines_insert: in: %d out: %d", lines->in_offs, lines->out_offs);
+    memcpy((char *)cc.buffptr, buf, count);
+    PDEBUG("lines_insert: in: %d out: %d", lines->in_offs, lines->out_offs);
 
     aesd_circular_buffer_add_entry(lines, &cc);
 }
@@ -104,42 +108,53 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 {
     struct aesd_dev *dev = filp->private_data;
 	ssize_t retval = -ENOMEM;
+    char *tmp_buf;
+    size_t tmp_size;
 
     PDEBUG("write %zu bytes with offset %lld", count, *f_pos);
 
 	if (mutex_lock_interruptible(&dev->lock))
 		return -ERESTARTSYS;
 
-    if (dev->line_buffer) {
-        kfree(dev->line_buffer);
-        dev->line_buffer_size = 0;
-        dev->line_buffer = NULL;
-    }
-    retval = -ENOMEM;
-    if(!(dev->line_buffer = kmalloc(count, GFP_KERNEL)))
-        goto out;
-    dev->line_buffer_size = count;
+    /*
+      TODO: do not re-allocate line_buf if it is alredy large enought.
+            Use ksize(...)
+    */
 
-    if (copy_from_user(dev->line_buffer, buf, count)) {
+    tmp_size = dev->line_buffer_size + count;
+    tmp_buf = krealloc(dev->line_buffer, tmp_size, GFP_KERNEL);
+    if(!tmp_buf) {
+        retval = -ENOMEM;
+        goto out;
+    }
+
+    dev->line_buffer = tmp_buf;
+
+    if (copy_from_user(dev->line_buffer + dev->line_buffer_size, buf, count)) {
         retval = -EFAULT;
-        kfree(dev->line_buffer);
-        dev->line_buffer_size = 0;
-        dev->line_buffer = NULL;
         goto out;
     }
-#if 1
-    if (1 || dev->line_buffer[count - 1] == '\n') {
-        lines_insert(dev->lines, dev->line_buffer, dev->line_buffer_size);
-        retval = dev->line_buffer_size;
-        *f_pos += dev->line_buffer_size;
 
+    dev->line_buffer_size = tmp_size;
+
+    retval = dev->line_buffer_size;
+    *f_pos += dev->line_buffer_size;
+
+    char *pos = memchr(tmp_buf, '\n', tmp_size);
+    while(pos) {
+        lines_insert(dev->lines, tmp_buf, pos - tmp_buf);
+        tmp_size -= pos - tmp_buf;
+        tmp_buf = pos + 1;
+        pos = memchr(tmp_buf, '\n', tmp_size);
+    }
+    PDEBUG("after while(pos) tmp_size = %zu", tmp_size);
+    if (tmp_size) {
+        memmove(dev->line_buffer, tmp_buf, tmp_size);
+    } else {
+        kfree(dev->line_buffer);
         dev->line_buffer = NULL;
         dev->line_buffer_size = 0;
     }
-#else
-    retval = count;
-    *f_pos += count;
-#endif
 
  out:
     PDEBUG("retval = %d", (int)retval);
