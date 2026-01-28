@@ -52,28 +52,34 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
 {
     ssize_t retval = 0;
     struct aesd_dev *dev = filp->private_data;
+    struct aesd_buffer_entry *ep;
+    size_t offset;
 
     PDEBUG("read %zu bytes with offset %lld", count, *f_pos);
 
 	if (mutex_lock_interruptible(&dev->lock))
 		return -ERESTARTSYS;
 
-	/* read only up to the end of this quantum */
-	if (count > dev->line_buffer_size)
-		count = dev->line_buffer_size;
+    ep = aesd_circular_buffer_find_entry_offset_for_fpos(dev->lines, *f_pos, &offset);
+    if (!ep) {
+        retval = 0;
+        goto out;
+    }
+    if (offset > ep->size) { /* ASSERT */
+        printk(KERN_ERR "%s: offset = %zu is > size = %zu\n", __func__, offset, ep->size);
+        retval = -EFAULT;
+        goto out;
+    }
+	if (count > ep->size - offset)
+		count = ep->size - offset;
 
-	if (copy_to_user(buf, dev->line_buffer, count)) {
+	if (copy_to_user(buf, ep->buffptr + offset, count)) {
 		retval = -EFAULT;
 		goto out;
 	}
 
 	*f_pos += count;
 	retval = count;
-
-    /* TODO: implement properly */
-    kfree(dev->line_buffer);
-    dev->line_buffer = NULL;
-    dev->line_buffer_size = 0;
 
  out:
     mutex_unlock(&dev->lock);
@@ -88,9 +94,8 @@ static void lines_insert(struct aesd_circular_buffer *lines, char *buf, size_t c
 {
     struct aesd_buffer_entry cc = { .buffptr = buf, .size = count };
 
-    PDEBUG( "lines_insert: in: %d 0out: %d", lines->in_offs, lines->out_offs);
+    PDEBUG( "lines_insert: in: %d out: %d", lines->in_offs, lines->out_offs);
 
-    kfree(lines->entry[lines->in_offs].buffptr);
     aesd_circular_buffer_add_entry(lines, &cc);
 }
 
@@ -122,13 +127,14 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         dev->line_buffer = NULL;
         goto out;
     }
-#if 0
-    if (dev->line_buffer[count - 1] == '\n') {
+#if 1
+    if (1 || dev->line_buffer[count - 1] == '\n') {
         lines_insert(dev->lines, dev->line_buffer, dev->line_buffer_size);
+        retval = dev->line_buffer_size;
+        *f_pos += dev->line_buffer_size;
+
         dev->line_buffer = NULL;
         dev->line_buffer_size = 0;
-
-        retval = dev->line_buffer_size;
     }
 #else
     retval = count;
@@ -136,6 +142,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 #endif
 
  out:
+    PDEBUG("retval = %d", (int)retval);
     mutex_unlock(&dev->lock);
     return retval;
 }
