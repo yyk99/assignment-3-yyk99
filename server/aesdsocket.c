@@ -11,9 +11,13 @@
 #include <signal.h>
 #include <poll.h>
 
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
 #include <assert.h>
 
-#define OUTPUT_FILE "/var/tmp/aesdsocketdata"
+#define OUTPUT_FILE "/dev/aesdchar"
 #define SERVICE "9000"
 #define BACK_LOG 10
 
@@ -90,7 +94,7 @@ struct list_data_s {
 
 volatile sig_atomic_t done = 0;
 static pthread_mutex_t dump_mutex = PTHREAD_MUTEX_INITIALIZER;
-static FILE *dump;
+static int dump = -1;
 
 int daemon_flag = 0;
 int verbose_flag = 0;
@@ -105,17 +109,16 @@ static void return_dump(struct param_t *ctx)
 {
     assert(ctx->record);
     pthread_mutex_lock(&dump_mutex);
-    fwrite(ctx->record, 1, ctx->record_len, dump);
-    fflush(dump);
+    write(dump, ctx->record, ctx->record_len);
 
-    FILE *f = fopen(OUTPUT_FILE, "r");
-    if (f) {
+    int fd = open(OUTPUT_FILE, O_RDONLY);
+    if (fd >= 0) {
         int s;
 
-        while ((s = fread(ctx->buf, 1, sizeof(ctx->buf), f)) > 0) {
+        while ((s = read(fd, ctx->buf, sizeof(ctx->buf))) > 0) {
             send(ctx->cli_sock, ctx->buf, s, 0);
         }
-        fclose(f);
+        close(fd);
     }
     free(ctx->record);
     ctx->record_len = 0;
@@ -139,7 +142,6 @@ static void *server_function(void *p)
         ssize_t s = recv(ctx->cli_sock, ctx->buf, sizeof(ctx->buf), 0);
         if (s <= 0) {
             syslog(LOG_INFO, "Close connection from %s", ctx->cli_addr);
-            fflush(dump);
             break;
         }
 
@@ -159,6 +161,7 @@ static void *server_function(void *p)
     return p;
 }
 
+#ifdef WITH_TIMESTAMPS
 /*
   man strftime(3), RFC 2822-compliant date format:
   "%a, %d %b %Y %T %z"
@@ -184,6 +187,7 @@ static void *timestamp_function(void *p)
     }
     return p;
 }
+#endif
 
 static void verbose(const char *format, ...)
 {
@@ -250,9 +254,9 @@ int main(int argc, char **argv)
     }
     freeaddrinfo(info);
 
-    dump = fopen(OUTPUT_FILE, "w");
-    if (!dump) {
-        syslog(LOG_ERR, "Cannot create dump file: %s", strerror(errno));
+    dump = open(OUTPUT_FILE, O_WRONLY);
+    if (dump < 0) {
+        syslog(LOG_ERR, "Cannot open %s file: %s", OUTPUT_FILE, strerror(errno));
         return -1;
     }
     if (listen(listen_sock, BACK_LOG)) {
@@ -268,14 +272,14 @@ int main(int argc, char **argv)
         setsid();
         syslog(LOG_INFO, "Daemon started");
     }
-
+#ifdef WITH_TIMESTAMPS
     pthread_t timestamp_tid;
 
     if (pthread_create(&timestamp_tid, NULL, timestamp_function, NULL)){
         syslog(LOG_ERR, "Cannot create timestamp thread");
         return -1;
     }
-
+#endif
     LIST_HEAD(listhead, list_data_s) head;
     LIST_INIT(&head);
 
@@ -354,9 +358,9 @@ int main(int argc, char **argv)
         }
         free(datap);
     }
-
+#ifdef WITH_TIMESTAMPS
     pthread_join(timestamp_tid, NULL);
-
-    fclose(dump);
+#endif
+    close(dump);
     return 0;
 }
