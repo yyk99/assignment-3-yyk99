@@ -8,3 +8,4 @@ linux_source_cdt
 *.mod
 build
 TAGS
+aesd_test

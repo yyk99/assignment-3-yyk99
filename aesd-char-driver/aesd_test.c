@@ -10,12 +10,12 @@
 #include <unistd.h>
 #include <string.h>
 
-#define STR_1 "0123456789\n"
+#define STR_1 "write1\nwrite2\nwrite3\nwrite4\nwrite5\nwrite6\nwrite7\nwrite8\nwrite9\nwrite10\nwrite11\nwrite12\n"
 #define STR_2 "hello\nthere\n"
 
 #define DEV_AESDCHAR "/dev/aesdchar"
 
-char buffer[80];
+char buffer[1024];
 
 int main()
 {
@@ -29,7 +29,7 @@ int main()
     }
 
     rc = write(fout, STR_1, strlen(STR_1));
-    printf("rc == %d\n", rc);
+    fprintf(stderr, "rc == %d\n", rc);
     close(fout);
 
     fin = open(DEV_AESDCHAR, O_RDONLY);
@@ -44,7 +44,7 @@ int main()
             perror("read from " DEV_AESDCHAR);
             return 1;
         }
-        printf("read(...) = %d\n", rc);
+        fprintf(stderr, "read(...) = %d\n", rc);
         if (rc == 0)
             break;
         fwrite(buffer, 1, rc, stdout);

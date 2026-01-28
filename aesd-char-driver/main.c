@@ -147,13 +147,13 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 
     dev->line_buffer_size = tmp_size;
 
-    retval = dev->line_buffer_size;
-    *f_pos += dev->line_buffer_size;
+    retval = count;
+    *f_pos += count;
 
     char *pos = memchr(tmp_buf, '\n', tmp_size);
     while(pos) {
         lines_insert(dev->lines, tmp_buf, pos - tmp_buf + 1);
-        tmp_size -= pos - tmp_buf;
+        tmp_size -= pos - tmp_buf + 1;
         tmp_buf = pos + 1;
         pos = memchr(tmp_buf, '\n', tmp_size);
     }
