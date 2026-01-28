@@ -31,6 +31,8 @@ clean:
 aesd_test: aesd_test.c
 	$(CC) -o aesd_test aesd_test.c
 
+TAGS: aesdchar.h aesdchar.mod.c aesd-circular-buffer.c aesd-circular-buffer.h aesd_test.c main.c Makefile
+	./make-etags.sh
 # Local Variables:
 # compile-command: "make clean && make -C /usr/src/linux-headers-$(uname -r) M=`pwd` modules CC=x86_64-linux-gnu-gcc-12"
 # End:

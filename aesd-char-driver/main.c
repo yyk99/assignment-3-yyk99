@@ -86,6 +86,16 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     return retval;
 }
 
+static void lines_delete(struct aesd_circular_buffer *self)
+{
+    int i;
+    for (i = 0 ; i != AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED ; ++i) {
+        kfree(self->entry[i].buffptr);
+        self->entry[i].buffptr = NULL;
+        self->entry[i].size = 0;
+    }
+}
+
 /*
    allocate memory and insert next entry to the circular buffer `lines`
  */
@@ -142,7 +152,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 
     char *pos = memchr(tmp_buf, '\n', tmp_size);
     while(pos) {
-        lines_insert(dev->lines, tmp_buf, pos - tmp_buf);
+        lines_insert(dev->lines, tmp_buf, pos - tmp_buf + 1);
         tmp_size -= pos - tmp_buf;
         tmp_buf = pos + 1;
         pos = memchr(tmp_buf, '\n', tmp_size);
@@ -150,7 +160,9 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     PDEBUG("after while(pos) tmp_size = %zu", tmp_size);
     if (tmp_size) {
         memmove(dev->line_buffer, tmp_buf, tmp_size);
+        dev->line_buffer_size = tmp_size;
     } else {
+        /* TODO: use ksize() */
         kfree(dev->line_buffer);
         dev->line_buffer = NULL;
         dev->line_buffer_size = 0;
@@ -225,7 +237,9 @@ void aesd_cleanup_module(void)
     cdev_del(&aesd_device.cdev);
 
     kfree(aesd_device.line_buffer);
-    kfree(aesd_device.lines);
+    aesd_device.line_buffer = NULL;
+
+    lines_delete(aesd_device.lines);
     aesd_device.lines = NULL;
 
     unregister_chrdev_region(devno, 1);
