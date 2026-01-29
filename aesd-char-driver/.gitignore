@@ -9,3 +9,4 @@ linux_source_cdt
 build
 TAGS
 aesd_test
+.*.o.d

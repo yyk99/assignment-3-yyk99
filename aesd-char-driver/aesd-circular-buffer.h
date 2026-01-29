@@ -77,6 +77,6 @@ extern void aesd_circular_buffer_init(struct aesd_circular_buffer *buffer);
             index<AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; \
             index++, entryptr=&((buffer)->entry[index]))
 
-
+extern size_t aesd_circular_buffer_size(struct aesd_circular_buffer *);
 
 #endif /* AESD_CIRCULAR_BUFFER_H */
