@@ -64,10 +64,11 @@ int aesd_release(struct inode *inode, struct file *filp)
 
 long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-	int err = 0, tmp;
+	int err = 0;
 	int retval = 0;
+    struct aesd_seekto pos;
 
-    (void)tmp;
+    PDEBUG("aesd_ioctl: cmd %u, arg %lu", cmd, arg);
 	/*
 	 * extract the type and number bitfields, and don't decode
 	 * wrong cmds: return ENOTTY (inappropriate ioctl) before access_ok()
@@ -92,7 +93,14 @@ long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 	switch(cmd) {
     case AESDCHAR_IOCSEEKTO:
-
+        PDEBUG("aesd_ioctl: AESDCHAR_IOCSEEKTO");
+        if(copy_from_user(&pos, (struct aesd_seekto __user *)arg, sizeof(struct aesd_seekto))) {
+            retval = -EFAULT;
+            break;
+        }
+        PDEBUG("aesd_ioctl: AESDCHAR_IOCSEEKTO: {%u %d}", pos.write_cmd, pos.write_cmd_offset);
+        retval = aesd_llseek(filp, pos.write_cmd_offset, pos.write_cmd);
+        break;
     default:  /* redundant, as cmd was checked against MAXNR */
 		return -ENOTTY;
 	}
@@ -207,7 +215,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 {
     struct aesd_dev *dev = filp->private_data;
 	ssize_t retval = -ENOMEM;
-    char *tmp_buf;
+    char *tmp_buf, *pos;
     size_t tmp_size;
 
     PDEBUG("write %zu bytes with offset %lld", count, *f_pos);
@@ -239,7 +247,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     retval = count;
     *f_pos += count;
 
-    char *pos = memchr(tmp_buf, '\n', tmp_size);
+    pos = memchr(tmp_buf, '\n', tmp_size);
     while(pos) {
         lines_insert(dev->lines, tmp_buf, pos - tmp_buf + 1);
         tmp_size -= pos - tmp_buf + 1;

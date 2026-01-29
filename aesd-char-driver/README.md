@@ -8,4 +8,8 @@ Template source code for the AESD char driver used with assignments 8 and later
 
 or
 
+	make
+
+To clean:
+
 	make clean
