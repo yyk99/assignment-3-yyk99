@@ -66,7 +66,9 @@ long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	int err = 0;
 	int retval = 0;
-    struct aesd_seekto pos;
+    ssize_t off;
+    struct aesd_seekto req;
+    struct aesd_dev *dev = filp->private_data;
 
     PDEBUG("aesd_ioctl: cmd %u, arg %lu", cmd, arg);
 	/*
@@ -93,13 +95,20 @@ long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 	switch(cmd) {
     case AESDCHAR_IOCSEEKTO:
-        PDEBUG("aesd_ioctl: AESDCHAR_IOCSEEKTO");
-        if(copy_from_user(&pos, (struct aesd_seekto __user *)arg, sizeof(struct aesd_seekto))) {
-            retval = -EFAULT;
-            break;
-        }
-        PDEBUG("aesd_ioctl: AESDCHAR_IOCSEEKTO: {%u %d}", pos.write_cmd, pos.write_cmd_offset);
-        retval = aesd_llseek(filp, pos.write_cmd_offset, pos.write_cmd);
+        if(copy_from_user(&req, (struct aesd_seekto __user *)arg, sizeof(struct aesd_seekto)))
+            return -EFAULT;
+
+        if(mutex_lock_interruptible(&dev->lock))
+            return -ERESTARTSYS;
+
+        off = aesd_circular_buffer_offset(dev->lines, req.write_cmd, req.write_cmd_offset);
+        mutex_unlock(&dev->lock);
+
+        PDEBUG("aesd_ioctl: AESDCHAR_IOCSEEKTO: {%u %d} => %ld", req.write_cmd, req.write_cmd_offset, (long int)off);
+
+        if (off == -1)
+            return -EINVAL;
+        filp->f_pos = off;
         break;
     default:  /* redundant, as cmd was checked against MAXNR */
 		return -ENOTTY;

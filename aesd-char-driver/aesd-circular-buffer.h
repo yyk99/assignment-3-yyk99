@@ -79,4 +79,9 @@ extern void aesd_circular_buffer_init(struct aesd_circular_buffer *buffer);
 
 extern size_t aesd_circular_buffer_size(struct aesd_circular_buffer *);
 
+/*
+  convert (cmd, off) to absolute offset
+ */
+extern ssize_t aesd_circular_buffer_offset(struct aesd_circular_buffer *, unsigned long cmd, unsigned long off);
+
 #endif /* AESD_CIRCULAR_BUFFER_H */

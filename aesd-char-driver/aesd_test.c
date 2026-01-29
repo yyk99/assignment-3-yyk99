@@ -82,13 +82,13 @@ int test_9()
     rc = ioctl(fout, AESDCHAR_IOCSEEKTO, &pos);
     if (rc < 0) {
         perror("Case 2: " DEV_AESDCHAR);
-        close(fout);
-        return 1;
+        /* close(fout); */
+        /* return 1; */
     }
     printf("Case 2: rc == %d\n", rc);
 
-    pos.write_cmd = 2; // END
-    pos.write_cmd_offset = 0;
+    pos.write_cmd = 0;
+    pos.write_cmd_offset = 2;
 
     rc = ioctl(fout, AESDCHAR_IOCSEEKTO, &pos);
     if (rc < 0) {

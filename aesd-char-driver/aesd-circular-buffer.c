@@ -104,3 +104,29 @@ size_t aesd_circular_buffer_size(struct aesd_circular_buffer *buffer)
     }
     return s;
 }
+
+ssize_t aesd_circular_buffer_offset(struct aesd_circular_buffer *buffer, unsigned long cmd, unsigned long off)
+{
+    int begin, end, i;
+    struct aesd_buffer_entry *p;
+    size_t s = 0;
+
+    if (buffer->in_offs == buffer->out_offs && !buffer->full)
+        return -1; /* error */
+
+    begin = buffer->out_offs;
+    end = buffer->in_offs;
+    if (end <= begin)
+        end += AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+
+    for (i = begin ; i < end ; ++i) {
+        p = &buffer->entry[ i % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED ];
+        if (cmd == i - begin) {
+            if (off < p->size)
+                return s + off;
+            return -1;
+        }
+        s += p->size;
+    }
+    return -1; /* error */
+}
