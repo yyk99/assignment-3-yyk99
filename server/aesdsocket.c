@@ -131,7 +131,10 @@ static void return_dump(struct param_t *ctx)
             aesd_seekto_set = true;
         }
     } else {
-        write(dump, ctx->record, ctx->record_len);
+        if(write(dump, ctx->record, ctx->record_len) != ctx->record_len) {
+            syslog(LOG_ERR, "write error: %s", strerror(errno));
+            exit(-1);
+        }
     }
     int fd = open(OUTPUT_FILE, O_RDONLY);
     if (fd >= 0) {
