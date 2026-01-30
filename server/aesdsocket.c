@@ -283,11 +283,6 @@ int main(int argc, char **argv)
     }
     freeaddrinfo(info);
 
-    dump = open(OUTPUT_FILE, O_WRONLY);
-    if (dump < 0) {
-        syslog(LOG_ERR, "Cannot open %s file: %s", OUTPUT_FILE, strerror(errno));
-        return -1;
-    }
     if (listen(listen_sock, BACK_LOG)) {
         syslog(LOG_ERR, "listen(...) failed: %d", errno);
         return -1;
@@ -351,6 +346,16 @@ int main(int argc, char **argv)
                 syslog(LOG_ERR, "accept(...) failed: %d", errno);
                 return -1;
             }
+
+            pthread_mutex_lock(&dump_mutex);
+            if (dump == -1) {
+                dump = open(OUTPUT_FILE, O_WRONLY);
+                if (dump < 0) {
+                    syslog(LOG_ERR, "Cannot open %s file: %s", OUTPUT_FILE, strerror(errno));
+                    return -1;
+                }
+            }
+            pthread_mutex_unlock(&dump_mutex);
 
             struct param_t *p = calloc(sizeof(struct param_t), 1);
             if (!p) {
