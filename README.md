@@ -43,3 +43,26 @@ From your main root assignment directory,
 
 When drivertest succeeds, start your modified aesdsocket application from the server subdirectory
 Verify it passes sockettest.sh by running ./assignment-autotest/test/assignment8/sockettest.sh
+
+## STEPS TO MANUALLY TEST ASSIGNMENT 9 on your native machine
+
+These steps are useful for debugging your application before attempting to run on
+an embedded target
+After following assignment implementation steps
+
+	cd aesd-char-driver
+	# do a make to build for your development machine.
+	./aesdchar_unload ; ./aesdchar_load  # to load your module on your development machine
+
+From your main root assignment directory,
+
+	cd ..
+	./assignment-autotest/test/assignment9/drivertest.sh  # to verify you implementation
+
+When drivertest succeeds, start your modified aesdsocket application from the server subdirectory
+
+Verify it passes sockettest.sh by running
+
+	./assignment-autotest/test/assignment9/sockettest.sh
+
+Test of assignment assignment9 complete with success

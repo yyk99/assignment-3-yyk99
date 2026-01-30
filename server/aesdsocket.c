@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <errno.h>
 #include <string.h>
 #include <signal.h>
@@ -21,12 +22,16 @@
 #define SERVICE "9000"
 #define BACK_LOG 10
 
+#define AESD_TAG "AESDCHAR_IOCSEEKTO:"
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
 #include <pthread.h>
 
 #include "queue.h"
+
+#include "../aesd-char-driver/aesd_ioctl.h"
 
 static void verbose(const char *format, ...);
 
@@ -107,13 +112,40 @@ static void on_signal(int)
 
 static void return_dump(struct param_t *ctx)
 {
-    assert(ctx->record);
-    pthread_mutex_lock(&dump_mutex);
-    write(dump, ctx->record, ctx->record_len);
+    struct aesd_seekto req;
+    bool aesd_seekto_set = false;
 
+    assert(ctx->record);
+    assert(ctx->record[ctx->record_len-1] == '\n');
+
+    pthread_mutex_lock(&dump_mutex);
+    if (ctx->record_len > strlen(AESD_TAG) && strncmp(ctx->record, AESD_TAG, strlen(AESD_TAG)) == 0) {
+        char *cp;
+        /* AESDCHAR_IOCSEEKTO:X,Y */
+        ctx->record[ctx->record_len - 1] = 0; /* replace '\n'; just in case */
+        req.write_cmd = strtoul(ctx->record + strlen(AESD_TAG), &cp, 10);
+        if (*cp++ != ',') {
+            syslog(LOG_ERR, "Bad format: %s", ctx->record);
+        } else {
+            req.write_cmd_offset = strtoul(cp, NULL, 10);
+            aesd_seekto_set = true;
+        }
+    } else {
+        if(write(dump, ctx->record, ctx->record_len) != ctx->record_len) {
+            syslog(LOG_ERR, "write error: %s", strerror(errno));
+            exit(-1);
+        }
+    }
     int fd = open(OUTPUT_FILE, O_RDONLY);
     if (fd >= 0) {
         int s;
+
+        if (aesd_seekto_set) {
+            syslog(LOG_DEBUG, "AESDCHAR_IOCSEEKTO: (%u, %u)", req.write_cmd, req.write_cmd_offset);
+            if (ioctl(fd, AESDCHAR_IOCSEEKTO, &req) == -1) {
+                syslog(LOG_ERR, "AESDCHAR_IOCSEEKTO failed: %s", strerror(errno));
+            }
+        }
 
         while ((s = read(fd, ctx->buf, sizeof(ctx->buf))) > 0) {
             send(ctx->cli_sock, ctx->buf, s, 0);
@@ -254,11 +286,6 @@ int main(int argc, char **argv)
     }
     freeaddrinfo(info);
 
-    dump = open(OUTPUT_FILE, O_WRONLY);
-    if (dump < 0) {
-        syslog(LOG_ERR, "Cannot open %s file: %s", OUTPUT_FILE, strerror(errno));
-        return -1;
-    }
     if (listen(listen_sock, BACK_LOG)) {
         syslog(LOG_ERR, "listen(...) failed: %d", errno);
         return -1;
@@ -322,6 +349,16 @@ int main(int argc, char **argv)
                 syslog(LOG_ERR, "accept(...) failed: %d", errno);
                 return -1;
             }
+
+            pthread_mutex_lock(&dump_mutex);
+            if (dump == -1) {
+                dump = open(OUTPUT_FILE, O_WRONLY);
+                if (dump < 0) {
+                    syslog(LOG_ERR, "Cannot open %s file: %s", OUTPUT_FILE, strerror(errno));
+                    return -1;
+                }
+            }
+            pthread_mutex_unlock(&dump_mutex);
 
             struct param_t *p = calloc(sizeof(struct param_t), 1);
             if (!p) {

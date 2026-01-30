@@ -14,6 +14,7 @@
 #include <stddef.h> // size_t
 #include <stdint.h> // uintx_t
 #include <stdbool.h>
+#include <sys/types.h> // ssize_t
 #endif
 
 #define AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED 10
@@ -77,6 +78,11 @@ extern void aesd_circular_buffer_init(struct aesd_circular_buffer *buffer);
             index<AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; \
             index++, entryptr=&((buffer)->entry[index]))
 
+extern size_t aesd_circular_buffer_size(struct aesd_circular_buffer *);
 
+/*
+  convert (cmd, off) to absolute offset
+ */
+extern ssize_t aesd_circular_buffer_offset(struct aesd_circular_buffer *, unsigned long cmd, unsigned long off);
 
 #endif /* AESD_CIRCULAR_BUFFER_H */

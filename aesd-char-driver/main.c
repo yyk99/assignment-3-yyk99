@@ -17,7 +17,18 @@
 #include <linux/types.h>
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
+#include <linux/version.h>
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,0,0)
+#define access_ok_wrapper(type,arg,cmd) \
+	access_ok(type, arg, cmd)
+#else
+#define access_ok_wrapper(type,arg,cmd) \
+	access_ok(arg, cmd)
+#endif
+
 #include "aesdchar.h"
+#include "aesd_ioctl.h"
 
 #include "aesd-circular-buffer.h"
 
@@ -45,6 +56,101 @@ int aesd_release(struct inode *inode, struct file *filp)
 {
     PDEBUG("release");
     return 0;
+}
+
+/*
+ * The ioctl() implementation
+ */
+
+long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+	int err = 0;
+	int retval = 0;
+    ssize_t off;
+    struct aesd_seekto req;
+    struct aesd_dev *dev = filp->private_data;
+
+    PDEBUG("aesd_ioctl: cmd %u, arg %lu", cmd, arg);
+	/*
+	 * extract the type and number bitfields, and don't decode
+	 * wrong cmds: return ENOTTY (inappropriate ioctl) before access_ok()
+	 */
+	if (_IOC_TYPE(cmd) != AESD_IOC_MAGIC)
+        return -ENOTTY;
+	if (_IOC_NR(cmd) > AESDCHAR_IOC_MAXNR)
+        return -ENOTTY;
+
+	/*
+	 * the direction is a bitmask, and VERIFY_WRITE catches R/W
+	 * transfers. `Type' is user-oriented, while
+	 * access_ok is kernel-oriented, so the concept of "read" and
+	 * "write" is reversed
+	 */
+	if (_IOC_DIR(cmd) & _IOC_READ)
+		err = !access_ok_wrapper(VERIFY_WRITE, (void __user *)arg, _IOC_SIZE(cmd));
+	else if (_IOC_DIR(cmd) & _IOC_WRITE)
+		err =  !access_ok_wrapper(VERIFY_READ, (void __user *)arg, _IOC_SIZE(cmd));
+	if (err)
+        return -EFAULT;
+
+	switch(cmd) {
+    case AESDCHAR_IOCSEEKTO:
+        if(copy_from_user(&req, (struct aesd_seekto __user *)arg, sizeof(struct aesd_seekto)))
+            return -EFAULT;
+
+        if(mutex_lock_interruptible(&dev->lock))
+            return -ERESTARTSYS;
+
+        off = aesd_circular_buffer_offset(dev->lines, req.write_cmd, req.write_cmd_offset);
+        mutex_unlock(&dev->lock);
+
+        PDEBUG("aesd_ioctl: AESDCHAR_IOCSEEKTO: {%u %d} => %ld", req.write_cmd, req.write_cmd_offset, (long int)off);
+
+        if (off == -1)
+            return -EINVAL;
+        filp->f_pos = off;
+        break;
+    default:  /* redundant, as cmd was checked against MAXNR */
+		return -ENOTTY;
+	}
+	return retval;
+}
+
+/*
+ * The "extended" operations -- only seek
+ */
+
+loff_t aesd_llseek(struct file *filp, loff_t off, int whence)
+{
+	struct aesd_dev *dev = filp->private_data;
+	loff_t newpos;
+
+    PDEBUG("aesd_llseek: whence %d, offset %lld", whence, off);
+
+	switch(whence) {
+    case 0: /* SEEK_SET */
+		newpos = off;
+		break;
+
+    case 1: /* SEEK_CUR */
+		newpos = filp->f_pos + off;
+		break;
+
+    case 2: /* SEEK_END */
+        if(mutex_lock_interruptible(&dev->lock))
+            return -ERESTARTSYS;
+
+		newpos = aesd_circular_buffer_size(dev->lines) + off;
+        mutex_unlock(&dev->lock);
+		break;
+
+    default: /* can't happen */
+		return -EINVAL;
+	}
+	if (newpos < 0)
+        return -EINVAL;
+	filp->f_pos = newpos;
+	return newpos;
 }
 
 ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
@@ -118,7 +224,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 {
     struct aesd_dev *dev = filp->private_data;
 	ssize_t retval = -ENOMEM;
-    char *tmp_buf;
+    char *tmp_buf, *pos;
     size_t tmp_size;
 
     PDEBUG("write %zu bytes with offset %lld", count, *f_pos);
@@ -150,7 +256,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     retval = count;
     *f_pos += count;
 
-    char *pos = memchr(tmp_buf, '\n', tmp_size);
+    pos = memchr(tmp_buf, '\n', tmp_size);
     while(pos) {
         lines_insert(dev->lines, tmp_buf, pos - tmp_buf + 1);
         tmp_size -= pos - tmp_buf + 1;
@@ -176,8 +282,10 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 
 struct file_operations aesd_fops = {
     .owner =    THIS_MODULE,
+    .llseek =   aesd_llseek,
     .read =     aesd_read,
     .write =    aesd_write,
+    .unlocked_ioctl = aesd_ioctl,
     .open =     aesd_open,
     .release =  aesd_release,
 };
